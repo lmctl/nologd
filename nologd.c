@@ -105,6 +105,9 @@ int main(int argc, char *argv[])
 
      s.epoll_fd = epoll_create1(EPOLL_CLOEXEC);
 
+     mkdir("/run/systemd", 0755);
+     mkdir("/run/systemd/journal", 0755);
+
      s.dev_log_fd = unix_open(&s, SOCK_DGRAM, "/dev/log");
      s.journal_fd = unix_open(&s, SOCK_DGRAM, "/run/systemd/journal/socket");
      s.stdout_fd = unix_open(&s, SOCK_STREAM, "/run/systemd/journal/stdout");
