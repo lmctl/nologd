@@ -25,6 +25,8 @@ struct Server {
      int journal_fd;
      int stdout_fd;
      int kmsg_fd;
+
+     int log_fd;
 };
 
 
@@ -94,7 +96,12 @@ void consume(struct Server *s, int fd, int do_close)
      */
 
      do {
-	  r = read(fd, &buf[0], NELEMS(buf));
+	  r = read(fd, &buf[0], NELEMS(buf) - 1);
+	  if (r > 0 && s->log_fd != -1) {
+	       buf[r] = '\n';
+	       write(s->log_fd, &buf[0], r+1);
+	  }
+
      } while (r > 0);
 
      if (do_close && r == 0)
@@ -105,6 +112,7 @@ void usage(void)
 {
      printf("usage: %s [-d] [-f FILE] [-h]\n"
 	    " -d        daemonize\n"
+	    " -f FILE   drop logs to FILE\n"
 	    " -h        this help screen\n",
 	  progname);
 }
@@ -113,17 +121,25 @@ int main(int argc, char *argv[])
 {
      int c;
      int r;
-     struct Server s;
+     struct Server s = { .log_fd = -1 };
      struct epoll_event ev;
      int do_daemonize = 0;
 
      progname = argv[0];
 
      do {
-	  c = getopt(argc, argv, "dh");
+	  c = getopt(argc, argv, "dhf:");
 
 	  if (c == 'd')
 	       do_daemonize = 1;
+	  else if (c == 'f') {
+	       int fd = open(optarg, O_WRONLY | O_CREAT | O_APPEND, 0640);
+
+	       if (fd < 0) {
+		    fprintf(stderr, "Unable to open %s: %m\n", optarg);
+		    exit(EXIT_FAILURE);
+	       }
+	       s.log_fd = fd;
 	  } else if (c == 'h' || c == '?') {
 	       usage();
 	       exit(c == 'h' ? EXIT_SUCCESS : EXIT_FAILURE);
