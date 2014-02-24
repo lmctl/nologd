@@ -27,6 +27,9 @@ struct Server {
      int kmsg_fd;
 };
 
+
+static char *progname;
+
 int unix_open(struct Server *s, int type, const char *path)
 {
      int r;
@@ -98,11 +101,38 @@ void consume(struct Server *s, int fd, int do_close)
 	  epoll_ctl(s->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
 }
 
+void usage(void)
+{
+     printf("usage: %s [-d] [-f FILE] [-h]\n"
+	    " -d        daemonize\n"
+	    " -h        this help screen\n",
+	  progname);
+}
+
 int main(int argc, char *argv[])
 {
+     int c;
      int r;
      struct Server s;
      struct epoll_event ev;
+     int do_daemonize = 0;
+
+     progname = argv[0];
+
+     do {
+	  c = getopt(argc, argv, "dh");
+
+	  if (c == 'd')
+	       do_daemonize = 1;
+	  } else if (c == 'h' || c == '?') {
+	       usage();
+	       exit(c == 'h' ? EXIT_SUCCESS : EXIT_FAILURE);
+	  }
+
+     } while (c != -1);
+
+     if (do_daemonize)
+	  daemon(0, 0);
 
      s.epoll_fd = epoll_create1(EPOLL_CLOEXEC);
 
