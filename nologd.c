@@ -24,7 +24,6 @@ struct Server {
      int dev_log_fd;
      int journal_fd;
      int stdout_fd;
-     int kmsg_fd;
 
      int log_fd;
 };
@@ -88,12 +87,6 @@ void consume(struct Server *s, int fd, int do_close)
 {
      int r;
      static char buf[2048];
-
-     /*
-     r = ioctl(fd, SIOCINQ, &len);
-     if (r < 0)
-	  return;
-     */
 
      do {
 	  r = read(fd, &buf[0], NELEMS(buf) - 1);
