@@ -18,6 +18,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 
 #include <sys/epoll.h>
 
@@ -209,6 +210,9 @@ int main(int argc, char *argv[])
 
      if (do_daemonize)
 	  daemon(0, 0);
+
+     /* Ignore flush request for time being */
+     signal(SIGUSR1, SIG_IGN);
 
      s.epoll_fd = epoll_create1(EPOLL_CLOEXEC);
 
