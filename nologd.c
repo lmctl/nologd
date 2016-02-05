@@ -3,7 +3,7 @@
  * Compile:
  *    cc -o nologd nologd.c
  * with support for journald-like socket activation:
- *    cc -o nologd -DHAVE_SYSTEMD $(pkgconfig --cflags --libs systemd) nologd.c
+ *    cc -o nologd -DHAVE_SYSTEMD $(pkgconfig --cflags --libs libsystemd) nologd.c
  */
 
 #define _GNU_SOURCE
