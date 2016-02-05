@@ -1,4 +1,10 @@
-/* nologd: consume all the logs without any processing */
+/* nologd: consume all the logs without any processing
+ *
+ * Compile:
+ *    cc -o nologd nologd.c
+ * with support for journald-like socket activation:
+ *    cc -o nologd -DHAVE_SYSTEMD $(pkgconfig --cflags --libs systemd) nologd.c
+ */
 
 #define _GNU_SOURCE
 
@@ -15,6 +21,10 @@
 
 #include <sys/epoll.h>
 
+#ifdef HAVE_SYSTEMD
+#include <systemd/sd-daemon.h>
+#endif
+
 #define NELEMS(arr) (sizeof(arr)/sizeof(arr[0]))
 
 /* Server context */
@@ -26,6 +36,21 @@ struct Server {
      int stdout_fd;
 
      int log_fd;
+};
+
+enum {
+     SOCK_DEV_LOG = 0,
+     SOCK_JOURNAL_SOCKET,
+     SOCK_JOURNAL_STDOUT,
+};
+
+struct {
+     int type;
+     char *path;
+} sockets[] = {
+     [SOCK_DEV_LOG]        = { SOCK_DGRAM,  "/run/systemd/journal/dev-log" },
+     [SOCK_JOURNAL_SOCKET] = { SOCK_DGRAM,  "/run/systemd/journal/socket"  },
+     [SOCK_JOURNAL_STDOUT] = { SOCK_STREAM, "/run/systemd/journal/stdout"  },
 };
 
 
@@ -113,6 +138,39 @@ void usage(void)
 	  progname);
 }
 
+int systemd_sock_get(struct Server *s)
+{
+     int n = 0;
+
+#ifdef HAVE_SYSTEMD
+     int i;
+
+     n = sd_listen_fds(1);
+     if (n < 0)
+	  return 0;
+
+     for (i = SD_LISTEN_FDS_START; i < SD_LISTEN_FDS_START + n; i++) {
+
+	  if (sd_is_socket_unix(i, sockets[SOCK_DEV_LOG].type, -1, sockets[SOCK_DEV_LOG].path, 0) > 0) {
+	       s->dev_log_fd = i;
+	       continue;
+	  }
+
+	  if (sd_is_socket_unix(i, sockets[SOCK_JOURNAL_SOCKET].type, -1, sockets[SOCK_JOURNAL_SOCKET].path, 0) > 0) {
+	       s->journal_fd = i;
+	       continue;
+	  }
+
+	  if (sd_is_socket_unix(i, sockets[SOCK_JOURNAL_STDOUT].type, 1, sockets[SOCK_JOURNAL_STDOUT].path, 0) > 0) {
+	       s->stdout_fd = i;
+	       continue;
+	  }
+     }
+#endif
+
+     return n;
+}
+
 int main(int argc, char *argv[])
 {
      int c;
@@ -156,12 +214,21 @@ int main(int argc, char *argv[])
      mkdir("/run/systemd", 0755);
      mkdir("/run/systemd/journal", 0755);
 
-     s.dev_log_fd = unix_open(&s, SOCK_DGRAM, "/dev/log");
-     s.journal_fd = unix_open(&s, SOCK_DGRAM, "/run/systemd/journal/socket");
-     s.stdout_fd = unix_open(&s, SOCK_STREAM, "/run/systemd/journal/stdout");
+     systemd_sock_get(&s);
+
+     if (s.dev_log_fd < 0)
+	  s.dev_log_fd = unix_open(&s, sockets[SOCK_DEV_LOG].type, sockets[SOCK_DEV_LOG].path);
+     if (s.journal_fd < 0)
+	  s.journal_fd = unix_open(&s, sockets[SOCK_JOURNAL_SOCKET].type, sockets[SOCK_JOURNAL_SOCKET].path);
+     if (s.stdout_fd < 0)
+	  s.stdout_fd = unix_open(&s, sockets[SOCK_JOURNAL_STDOUT].type, sockets[SOCK_JOURNAL_STDOUT].path);
+
      if (s.dev_log_fd >= 0) {
 	  fd_set_nonblock(s.dev_log_fd);
 	  epoll_addwatch(&s, s.dev_log_fd);
+
+	  symlink(sockets[SOCK_DEV_LOG].path, "/dev/log");
+
      }
 
      if (s.journal_fd >= 0) {
