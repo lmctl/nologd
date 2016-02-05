@@ -31,12 +31,22 @@ struct Server {
 
 static char *progname;
 
+void epoll_addwatch(struct Server *s, int fd)
+{
+     struct epoll_event ev = { .events = EPOLLIN, .data.fd = fd };
+     epoll_ctl(s->epoll_fd, EPOLL_CTL_ADD, fd, &ev);
+}
+
+void fd_set_nonblock(int fd)
+{
+     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+}
+
 int unix_open(struct Server *s, int type, const char *path)
 {
      int r;
      int fd;
      struct sockaddr_un sa = { .sun_family = AF_UNIX };
-     struct epoll_event ev = { .events = EPOLLIN };
 
      fd = socket(AF_UNIX, type | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
      if (fd < 0)
@@ -58,18 +68,12 @@ int unix_open(struct Server *s, int type, const char *path)
 	  return -errno;
      }
 
-     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
-
-     ev.data.fd = fd;
-     epoll_ctl(s->epoll_fd, EPOLL_CTL_ADD, fd, &ev);
-
      return fd;
 }
 
-void unix_accept(struct Server *s, int stdout_fd)
+int unix_accept(struct Server *s, int stdout_fd)
 {
      int fd;
-     struct epoll_event ev = { .events = EPOLLIN };
      struct sockaddr_un sa;
      socklen_t slen;
 
@@ -79,8 +83,7 @@ void unix_accept(struct Server *s, int stdout_fd)
 	  return;
      }
 
-     ev.data.fd = fd;
-     epoll_ctl(s->epoll_fd, EPOLL_CTL_ADD, fd, &ev);
+     return fd;
 }
 
 void consume(struct Server *s, int fd, int do_close)
@@ -114,7 +117,12 @@ int main(int argc, char *argv[])
 {
      int c;
      int r;
-     struct Server s = { .log_fd = -1 };
+     struct Server s = {
+	  .log_fd = -1,
+	  .dev_log_fd = -1,
+	  .journal_fd = -1,
+	  .stdout_fd = -1,
+     };
      struct epoll_event ev;
      int do_daemonize = 0;
 
@@ -151,6 +159,19 @@ int main(int argc, char *argv[])
      s.dev_log_fd = unix_open(&s, SOCK_DGRAM, "/dev/log");
      s.journal_fd = unix_open(&s, SOCK_DGRAM, "/run/systemd/journal/socket");
      s.stdout_fd = unix_open(&s, SOCK_STREAM, "/run/systemd/journal/stdout");
+     if (s.dev_log_fd >= 0) {
+	  fd_set_nonblock(s.dev_log_fd);
+	  epoll_addwatch(&s, s.dev_log_fd);
+     }
+
+     if (s.journal_fd >= 0) {
+	  fd_set_nonblock(s.journal_fd);
+	  epoll_addwatch(&s, s.journal_fd);
+     }
+
+     if (s.stdout_fd >= 0) {
+	  epoll_addwatch(&s, s.stdout_fd);
+     }
 
      while (1) {
 	  r = epoll_wait(s.epoll_fd, &ev, 1, -1);
@@ -164,7 +185,9 @@ int main(int argc, char *argv[])
 	  } else if (ev.data.fd == s.journal_fd) {
 	       consume(&s, s.journal_fd, 0);
 	  } else if (ev.data.fd == s.stdout_fd) {
-	       unix_accept(&s, s.stdout_fd);
+	       int newfd = unix_accept(&s, s.stdout_fd);
+	       fd_set_nonblock(newfd);
+	       epoll_addwatch(&s, newfd);
 	  } else {
 	       /* pre-opened stdout fd */
 	       consume(&s, ev.data.fd, 1);
