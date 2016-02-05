@@ -183,6 +183,7 @@ int main(int argc, char *argv[])
      };
      struct epoll_event ev;
      int do_daemonize = 0;
+     int nwatching = 0;
 
      progname = argv[0];
 
@@ -229,15 +230,23 @@ int main(int argc, char *argv[])
 
 	  symlink(sockets[SOCK_DEV_LOG].path, "/dev/log");
 
+	  ++ nwatching;
      }
 
      if (s.journal_fd >= 0) {
 	  fd_set_nonblock(s.journal_fd);
 	  epoll_addwatch(&s, s.journal_fd);
+	  ++ nwatching;
      }
 
      if (s.stdout_fd >= 0) {
 	  epoll_addwatch(&s, s.stdout_fd);
+	  ++ nwatching;
+     }
+
+     if (!nwatching) {
+	  fprintf(stderr, "%s: Unable to watch on any of defined sockets.  Exiting.\n", progname);
+	  exit(EXIT_FAILURE);
      }
 
      while (1) {
