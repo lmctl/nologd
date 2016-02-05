@@ -266,7 +266,7 @@ int main(int argc, char *argv[])
 	       epoll_addwatch(&s, newfd);
 	  } else {
 	       /* pre-opened stdout fd */
-	       consume(&s, ev.data.fd, 1);
+	       consume(&s, ev.data.fd, 0);
 	  }
      }
 
