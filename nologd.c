@@ -104,10 +104,8 @@ int unix_accept(struct Server *s, int stdout_fd)
      socklen_t slen;
 
      fd = accept4(stdout_fd, (struct sockaddr *)&sa, &slen, SOCK_NONBLOCK | SOCK_CLOEXEC);
-     if (fd < 0) {
+     if (fd < 0) /* XXX not printed at all if we were daemon()ized */
 	  fprintf(stderr, "accept failed: %s\n", strerror(errno));
-	  return;
-     }
 
      return fd;
 }
@@ -260,14 +258,19 @@ int main(int argc, char *argv[])
 	       exit(EXIT_FAILURE);
 	  }
 
+	  if (ev.data.fd == s.stdout_fd) {
+	       int newfd = unix_accept(&s, s.stdout_fd);
+	       if (newfd >= 0) {
+		    fd_set_nonblock(newfd);
+		    epoll_addwatch(&s, newfd);
+	       }
+	       continue;
+	  }
+
 	  if (ev.data.fd == s.dev_log_fd) {
 	       consume(&s, s.dev_log_fd, 0);
 	  } else if (ev.data.fd == s.journal_fd) {
 	       consume(&s, s.journal_fd, 0);
-	  } else if (ev.data.fd == s.stdout_fd) {
-	       int newfd = unix_accept(&s, s.stdout_fd);
-	       fd_set_nonblock(newfd);
-	       epoll_addwatch(&s, newfd);
 	  } else {
 	       /* pre-opened stdout fd */
 	       consume(&s, ev.data.fd, 0);
