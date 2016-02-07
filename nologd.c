@@ -208,9 +208,6 @@ int main(int argc, char *argv[])
 
      } while (c != -1);
 
-     if (do_daemonize)
-	  daemon(0, 0);
-
      /* Ignore flush request for time being */
      signal(SIGUSR1, SIG_IGN);
 
@@ -252,6 +249,9 @@ int main(int argc, char *argv[])
 	  fprintf(stderr, "%s: Unable to watch on any of defined sockets.  Exiting.\n", progname);
 	  exit(EXIT_FAILURE);
      }
+
+     if (do_daemonize)
+	  daemon(0, 0);
 
      while (1) {
 	  r = epoll_wait(s.epoll_fd, &ev, 1, -1);
