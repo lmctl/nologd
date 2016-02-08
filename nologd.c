@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <ctype.h>
 
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -110,22 +111,82 @@ int unix_accept(struct Server *s, int stdout_fd)
      return fd;
 }
 
-void consume(struct Server *s, int fd, int do_close)
+
+typedef int (*process_fn)(struct Server *, char *, int);
+
+void consume(struct Server *s, int fd, int do_close, process_fn fn)
 {
      int r;
      static char buf[2048];
 
      do {
 	  r = read(fd, &buf[0], NELEMS(buf) - 1);
-	  if (r > 0 && s->log_fd != -1) {
-	       buf[r] = '\n';
-	       write(s->log_fd, &buf[0], r+1);
-	  }
-
+	  fn(s, buf, r);
      } while (r > 0);
 
-     if (do_close && r == 0)
+     if (do_close && r == 0) {
+	  close(fd);
 	  epoll_ctl(s->epoll_fd, EPOLL_CTL_DEL, fd, NULL);
+     }
+}
+
+/* Expected format:
+ *   <13>Feb  7 23:34:43 MSG
+ */
+int process_syslog(struct Server *s, char *buf, int len)
+{
+     int start = 0;
+     int end = len - 1;
+
+     if (s->log_fd == -1 || len == -1)
+	  return 0;
+
+     /* Drop numerically coded log level and facility as we perform no
+      * filtering based on this information.
+      */
+     if (start < len && buf[start] == '<') {
+
+	  do {
+	       ++start;
+	  } while (start < len && isdigit(buf[start]));
+
+	  if (buf[start] == '>')
+	       ++start;
+     }
+
+     while (end > 0 && buf[end] == '\n')
+	  buf[end--] = '\0';
+
+     write(s->log_fd, buf + start, end - start);
+     write(s->log_fd, "\n", 1);
+
+     return end - start + 1;
+}
+
+int process_journal(struct Server *s, char *buf, int len)
+{
+     int pos;
+
+     if (s->log_fd == -1 || len == -1)
+	  return 0;
+
+     for (pos = 0; pos < len; pos++)
+	  if (buf[pos] == '\n')
+	       buf[pos] = ' ';
+
+     write(s->log_fd, buf, len);
+     write(s->log_fd, "\n", 1);
+
+     return len + 1;
+}
+int process_stream(struct Server *s, char *buf, int len)
+{
+     if (s->log_fd == -1 || len == -1)
+	  return 0;
+
+     /* To be implemented */
+
+     return 0;
 }
 
 void usage(void)
@@ -268,12 +329,12 @@ int main(int argc, char *argv[])
 	  }
 
 	  if (ev.data.fd == s.dev_log_fd) {
-	       consume(&s, s.dev_log_fd, 0);
+	       consume(&s, s.dev_log_fd, 0, process_syslog);
 	  } else if (ev.data.fd == s.journal_fd) {
-	       consume(&s, s.journal_fd, 0);
+	       consume(&s, s.journal_fd, 0, process_journal);
 	  } else {
 	       /* pre-opened stdout fd */
-	       consume(&s, ev.data.fd, 0);
+	       consume(&s, ev.data.fd, 1, process_stream);
 	  }
      }
 
