@@ -102,7 +102,7 @@ int unix_accept(struct Server *s, int stdout_fd)
 {
      int fd;
      struct sockaddr_un sa;
-     socklen_t slen;
+     socklen_t slen = sizeof(sa);
 
      fd = accept4(stdout_fd, (struct sockaddr *)&sa, &slen, SOCK_NONBLOCK | SOCK_CLOEXEC);
      if (fd < 0) /* XXX not printed at all if we were daemon()ized */
