@@ -1,5 +1,8 @@
 /* nologd: consume all the logs without any processing
  *
+ * Copyright (C) 2014, 2016  Karol Lewandowski
+ * Licensed under terms of GNU GPL v2 (or later). See LICENSE.
+ *
  * Compile:
  *    cc -o nologd nologd.c
  * with support for journald-like socket activation:
