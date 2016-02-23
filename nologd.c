@@ -65,6 +65,7 @@ struct {
 static const char dev_kmsg_path[] = "/dev/kmsg";
 
 static char *progname;
+static int terminate_signal;
 
 void epoll_addwatch(struct Server *s, int fd)
 {
@@ -266,6 +267,12 @@ int systemd_sock_get(struct Server *s)
      return n;
 }
 
+void terminate(int signo)
+{
+     if (!terminate_signal)
+	  terminate_signal = signo;
+}
+
 int main(int argc, char *argv[])
 {
      int c;
@@ -305,6 +312,10 @@ int main(int argc, char *argv[])
 
      /* Ignore flush request for time being */
      signal(SIGUSR1, SIG_IGN);
+
+     signal(SIGHUP, SIG_IGN);
+     signal(SIGINT, terminate);
+     signal(SIGTERM, terminate);
 
      s.epoll_fd = epoll_create1(EPOLL_CLOEXEC);
 
