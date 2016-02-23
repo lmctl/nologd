@@ -13,6 +13,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <errno.h>
 #include <ctype.h>
 
@@ -23,6 +24,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <syslog.h>
 
 #include <sys/epoll.h>
 
@@ -41,6 +43,8 @@ struct Server {
      int stdout_fd;
 
      int log_fd;
+
+     int kernel_fd;
 };
 
 enum {
@@ -58,6 +62,7 @@ struct {
      [SOCK_JOURNAL_STDOUT] = { SOCK_STREAM, "/run/systemd/journal/stdout"  },
 };
 
+static const char dev_kmsg_path[] = "/dev/kmsg";
 
 static char *progname;
 
@@ -70,6 +75,35 @@ void epoll_addwatch(struct Server *s, int fd)
 void fd_set_nonblock(int fd)
 {
      fcntl(fd, F_SETFL, fcntl(fd, F_GETFL, 0) | O_NONBLOCK);
+}
+
+void babble(struct Server *s, int priority, const char *fmt, ...)
+{
+     int fd = s->kernel_fd != -1 ? s->kernel_fd : STDOUT_FILENO;
+     va_list ap;
+     static char buf[1024];
+     unsigned int end;
+     int n;
+
+     n = snprintf(buf, sizeof buf, "<%d>%s: ", priority & 7, progname);
+     if (n < 0)
+	  return;
+     end = n;
+
+     va_start(ap, fmt);
+     n = vsnprintf(buf + end, sizeof(buf) - end, fmt, ap);
+     va_end(ap);
+
+     if (n < 0)
+	  return;
+     end += n;
+
+     if (end + 1 <= sizeof buf) {
+	  buf[end++] = '\n';
+	  buf[end] = 0;
+     }
+
+     write(fd, buf, end);
 }
 
 int unix_open(struct Server *s, int type, const char *path)
@@ -108,8 +142,6 @@ int unix_accept(struct Server *s, int stdout_fd)
      socklen_t slen = sizeof(sa);
 
      fd = accept4(stdout_fd, (struct sockaddr *)&sa, &slen, SOCK_NONBLOCK | SOCK_CLOEXEC);
-     if (fd < 0) /* XXX not printed at all if we were daemon()ized */
-	  fprintf(stderr, "accept failed: %s\n", strerror(errno));
 
      return fd;
 }
@@ -243,6 +275,7 @@ int main(int argc, char *argv[])
 	  .dev_log_fd = -1,
 	  .journal_fd = -1,
 	  .stdout_fd = -1,
+	  .kernel_fd = -1,
      };
      struct epoll_event ev;
      int do_daemonize = 0;
@@ -259,7 +292,7 @@ int main(int argc, char *argv[])
 	       int fd = open(optarg, O_WRONLY | O_CREAT | O_APPEND, 0640);
 
 	       if (fd < 0) {
-		    fprintf(stderr, "Unable to open %s: %m\n", optarg);
+		    babble(&s, LOG_CRIT, "Unable to open %s: %m", optarg);
 		    exit(EXIT_FAILURE);
 	       }
 	       s.log_fd = fd;
@@ -308,17 +341,26 @@ int main(int argc, char *argv[])
      }
 
      if (!nwatching) {
-	  fprintf(stderr, "%s: Unable to watch on any of defined sockets.  Exiting.\n", progname);
+	  babble(&s, LOG_CRIT, "Unable to watch on any of defined sockets.  Exiting");
 	  exit(EXIT_FAILURE);
      }
+
+     s.kernel_fd = open(dev_kmsg_path, O_WRONLY);
+     if (s.kernel_fd == -1)
+	  babble(&s, LOG_WARNING, "Unable to open %s for logging.  Skipping", dev_kmsg_path);
 
      if (do_daemonize)
 	  daemon(0, 0);
 
-     while (1) {
+     babble(&s, LOG_INFO, "Started.  Consuming logs for: %s %s %s",
+	 s.dev_log_fd != -1 ? "syslog" : "",
+	 s.journal_fd != -1 ? "journal-packets" : "",
+	 s.stdout_fd != -1 ? "journal-streams" : "");
+
+     while (!terminate_signal) {
 	  r = epoll_wait(s.epoll_fd, &ev, 1, -1);
 	  if (r < 0 && errno != EINTR) {
-	       fprintf(stderr, "epoll_wait failed: %s\n", strerror(errno));
+	       babble(&s, LOG_CRIT, "epoll_wait failed: %s.  Exiting", strerror(errno));
 	       exit(EXIT_FAILURE);
 	  }
 
@@ -327,7 +369,9 @@ int main(int argc, char *argv[])
 	       if (newfd >= 0) {
 		    fd_set_nonblock(newfd);
 		    epoll_addwatch(&s, newfd);
-	       }
+	       } else
+		    babble(&s, LOG_ERR, "accept failed: %s.  Ignoring", strerror(errno));
+
 	       continue;
 	  }
 
@@ -340,6 +384,8 @@ int main(int argc, char *argv[])
 	       consume(&s, ev.data.fd, 1, process_stream);
 	  }
      }
+
+     babble(&s, LOG_NOTICE, "Terminated by signal %d", terminate_signal);
 
      return EXIT_SUCCESS;
 }
